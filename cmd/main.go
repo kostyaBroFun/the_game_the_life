@@ -2,14 +2,13 @@ package main
 
 import (
 	"fmt"
+	"github.com/nsf/termbox-go"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"the_game_the_life/game"
 	"time"
-
-	"github.com/nsf/termbox-go"
 )
 
 const cellsInLine = 1
@@ -19,6 +18,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	termbox.SetInputMode(termbox.InputEsc | termbox.InputMouse)
 
 	gameLoop := game.NewLoop(
 		game.WithView(func(m map[game.Pair]*game.Cell) {
@@ -60,6 +60,10 @@ func main() {
 					termbox.SetCell(pair.X(), pair.Y(), '█', termbox.ColorDefault, termbox.ColorDefault)
 				}
 			}
+			err := termbox.Flush()
+			if err != nil {
+				panic(err)
+			}
 			time.Sleep(1 * time.Second)
 		}),
 		game.WithLiveCell(game.NewPair(10, 10)),
@@ -75,9 +79,21 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, []os.Signal{syscall.SIGINT, syscall.SIGTERM}...)
 
+	go func() {
+		for {
+			switch ev := termbox.PollEvent(); ev.Type {
+			case termbox.EventKey:
+				if ev.Key == termbox.KeyEsc {
+					c <- syscall.SIGTERM
+				}
+			}
+		}
+	}()
+
 	// Block until we receive our signal.
 	<-c
 	log.Println("stop")
 	gameLoop.Stop()
 	termbox.Close()
+	close(c)
 }
