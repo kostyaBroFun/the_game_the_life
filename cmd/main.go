@@ -94,6 +94,11 @@ func main() {
 				if ev.Key == termbox.KeyEsc {
 					c <- syscall.SIGTERM
 				}
+			case termbox.EventMouse:
+				if ev.Key == termbox.MouseLeft {
+					x, y := ev.MouseX, ev.MouseY
+					gameLoop.CreateLife(game.NewPair(x, y))
+				}
 			}
 		}
 	}()

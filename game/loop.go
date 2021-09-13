@@ -1,5 +1,9 @@
 package game
 
+import (
+	"sync"
+)
+
 // TODO calculate status
 // TODO calculate era
 
@@ -26,7 +30,10 @@ func (p Pair) Y() int {
 type ViewFunc func(map[Pair]*Cell)
 
 type Loop struct {
-	cells        map[Pair]*Cell
+	cells struct {
+		cells map[Pair]*Cell
+		rwMx  *sync.RWMutex
+	}
 	stop         chan struct{}
 	viewFuncList []ViewFunc
 }
@@ -41,14 +48,19 @@ func WithView(viewFunc ViewFunc) Option {
 
 func WithLiveCell(cord Pair) Option {
 	return func(loop *Loop) {
-		loop.cells[cord] = &Cell{currentStatus: CellLive}
+		loop.cells.cells[cord] = &Cell{currentStatus: CellLive}
 	}
 }
 
 func NewLoop(options ...Option) *Loop {
 	loop := &Loop{
-		cells: make(map[Pair]*Cell),
-		stop:  make(chan struct{}),
+		cells: struct {
+			cells map[Pair]*Cell
+			rwMx  *sync.RWMutex
+		}{
+			cells: make(map[Pair]*Cell),
+			rwMx:  &sync.RWMutex{}},
+		stop: make(chan struct{}),
 	}
 
 	for _, option := range options {
@@ -71,19 +83,27 @@ func (l *Loop) StartTheLife() {
 	}
 }
 
+func (l *Loop) CreateLife(pair Pair) {
+	l.cells.rwMx.Lock()
+	l.cells.cells[pair] = &Cell{currentStatus: CellLive}
+	l.cells.rwMx.Unlock()
+}
+
 func (l *Loop) Stop() {
 	l.stop <- struct{}{}
 	close(l.stop)
 }
 
 func (l *Loop) currentToPast() {
-	for _, cell := range l.cells {
+	l.cells.rwMx.RLock()
+	for _, cell := range l.cells.cells {
 		cell.previewStatus = cell.currentStatus
 	}
+	l.cells.rwMx.RUnlock()
 }
 
 func (l *Loop) recalculateCurrentByPast() {
-	for point, cell := range l.cells { // TODO cell must have only one curent. loop must think about pust mb
+	for point, cell := range l.cells.cells { // TODO cell must have only one curent. loop must think about pust mb
 		switch cell.previewStatus {
 		case CellLive:
 			l.createNeighborsIfNeed(NewPair(point.x-1, point.y-1))
@@ -105,12 +125,15 @@ func (l *Loop) recalculateCurrentByPast() {
 		}
 	}
 }
-func (l *Loop) createNeighborsIfNeed(point Pair) {
-	if _, ok := l.cells[point]; !ok {
-		l.cells[point] = NewCell(CellDied)
-	}
 
-	c := l.cells[point]
+func (l *Loop) createNeighborsIfNeed(point Pair) {
+	l.cells.rwMx.Lock()
+	if _, ok := l.cells.cells[point]; !ok {
+		l.cells.cells[point] = NewCell(CellDied)
+	}
+	l.cells.rwMx.Unlock()
+
+	c := l.cells.cells[point]
 	if c.previewStatus == CellDied {
 		if l.calculateNeighbors(point) == 3 {
 			c.currentStatus = CellLive
@@ -134,15 +157,21 @@ func (l *Loop) calculateNeighbors(point Pair) int {
 }
 
 func (l *Loop) updateNeighborCounter(countLiveNeighbors *int, point Pair, xShift int, yShift int) {
-	if n, ok := l.cells[Pair{x: point.x + xShift, y: point.y + yShift}]; ok {
+	l.cells.rwMx.RLock()
+	if n, ok := l.cells.cells[Pair{x: point.x + xShift, y: point.y + yShift}]; ok {
+		l.cells.rwMx.RUnlock()
 		if n.previewStatus == CellLive {
 			*(countLiveNeighbors)++
 		}
+	} else {
+		l.cells.rwMx.RUnlock()
 	}
 }
 
 func (l *Loop) view() {
+	l.cells.rwMx.RLock()
 	for i := 0; i < len(l.viewFuncList); i++ {
-		(l.viewFuncList[i])(l.cells)
+		(l.viewFuncList[i])(l.cells.cells)
 	}
+	l.cells.rwMx.RUnlock()
 }
